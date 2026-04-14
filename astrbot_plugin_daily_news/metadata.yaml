@@ -1,0 +1,12 @@
+name: astrbot_plugin_daily_news
+display_name: Daily News
+desc: RSS-based AstrBot plugin for fetching today's top headlines via AI tool or /news commands
+version: 0.1.0
+author: YARIZM
+repo: https://github.com/yarizm/EuxrvshPVPBOTv0.01
+astrbot_version: ">=4.16,<5"
+support_platforms:
+  - qq_official
+  - aiocqhttp
+  - telegram
+  - discord

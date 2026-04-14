@@ -1,0 +1,22 @@
+{
+  "rss_url": {
+    "description": "RSS feed URL for daily headlines",
+    "type": "string",
+    "default": "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+  },
+  "max_items": {
+    "description": "Maximum number of headlines to return",
+    "type": "int",
+    "default": 5
+  },
+  "request_timeout_seconds": {
+    "description": "HTTP timeout in seconds",
+    "type": "int",
+    "default": 10
+  },
+  "enable_fallback_commands": {
+    "description": "Enable /news fallback commands",
+    "type": "bool",
+    "default": true
+  }
+}
