@@ -1,8 +1,18 @@
 {
-  "rss_url": {
-    "description": "RSS feed URL for daily headlines",
+  "source_ids": {
+    "description": "Ordered news sources. Supports built-ins like 36kr-newsflash, ithome, cnbeta, qq-news-hot, thepaper-hot; raw RSS URLs; or dailyhot:<route>.",
     "type": "string",
-    "default": "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    "default": "36kr-newsflash,ithome,cnbeta"
+  },
+  "dailyhot_base_url": {
+    "description": "Base URL for optional DailyHot-compatible public hotlist endpoints",
+    "type": "string",
+    "default": "https://api-hot.imsyy.top"
+  },
+  "rss_url": {
+    "description": "Legacy single RSS URL override. Kept for backward compatibility when source_ids is not set.",
+    "type": "string",
+    "default": ""
   },
   "max_items": {
     "description": "Maximum number of headlines to return",
