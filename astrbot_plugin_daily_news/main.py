@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 import html
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -69,6 +70,20 @@ except ModuleNotFoundError:  # pragma: no cover - local fallback for development
 
 
 LEGACY_GOOGLE_RSS_URL = "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+
+_logger = logging.getLogger(__name__)
+
+# 中文字段名 → 旧英文字段名，用于向后兼容
+_FIELD_COMPAT: dict[str, str] = {
+    "新闻源": "source_ids",
+    "自定义源": "custom_sources",
+    "每日热榜地址": "dailyhot_base_url",
+    "旧版RSS地址": "rss_url",
+    "最大条数": "max_items",
+    "请求超时": "request_timeout_seconds",
+    "启用命令": "enable_fallback_commands",
+}
+
 DEFAULT_SOURCE_IDS = (
     "36kr-newsflash",
     "ithome",
@@ -198,7 +213,51 @@ def _build_dailyhot_url(base_url: str, route: str) -> str:
     return f"{base_url.rstrip('/')}/{route.lstrip('/')}"
 
 
-def _resolve_source_token(token: str, dailyhot_base_url: str) -> NewsSource:
+def _parse_custom_sources(value: Any, dailyhot_base_url: str) -> dict[str, NewsSource]:
+    if not value:
+        return {}
+    try:
+        items = json.loads(value) if isinstance(value, str) else value
+    except (json.JSONDecodeError, TypeError) as exc:
+        _logger.warning("自定义源 JSON 解析失败: %s", exc)
+        return {}
+    if not isinstance(items, list):
+        _logger.warning("自定义源不是 JSON 数组，已忽略")
+        return {}
+
+    registry: dict[str, NewsSource] = {}
+    for item in items:
+        if not isinstance(item, Mapping):
+            _logger.warning("自定义源条目不是对象，已跳过: %r", item)
+            continue
+        source_id = str(item.get("id") or "").strip()
+        display_name = str(item.get("name") or "").strip()
+        source_type = str(item.get("type") or "").strip().lower()
+        endpoint = str(item.get("endpoint") or "").strip()
+        if not source_id or not endpoint or source_type not in {"rss", "dailyhot"}:
+            _logger.warning("自定义源条目缺少必填字段或 type 无效，已跳过: %r", item)
+            continue
+        if source_id in BUILTIN_SOURCES:
+            _logger.warning("自定义源 ID %r 与内置源冲突，已跳过", source_id)
+            continue
+        if not display_name:
+            display_name = source_id
+        if source_type == "dailyhot":
+            endpoint = _build_dailyhot_url(dailyhot_base_url, endpoint)
+        registry[source_id] = NewsSource(
+            source_id=source_id,
+            display_name=display_name,
+            source_type=source_type,
+            endpoint=endpoint,
+        )
+    return registry
+
+
+def _resolve_source_token(
+    token: str,
+    dailyhot_base_url: str,
+    custom_registry: dict[str, NewsSource] | None = None,
+) -> NewsSource:
     builtin = BUILTIN_SOURCES.get(token)
     if builtin is not None:
         source_id, display_name, source_type, endpoint = builtin
@@ -210,6 +269,11 @@ def _resolve_source_token(token: str, dailyhot_base_url: str) -> NewsSource:
             source_type=source_type,
             endpoint=endpoint,
         )
+
+    if custom_registry:
+        custom = custom_registry.get(token)
+        if custom is not None:
+            return custom
 
     if token.startswith("dailyhot:"):
         route = token.split(":", 1)[1].strip()
@@ -248,25 +312,40 @@ def _default_source_tokens() -> list[str]:
     return list(DEFAULT_SOURCE_IDS)
 
 
+def _cfg(raw_config: Mapping[str, Any], cn_key: str, default: Any = "") -> Any:
+    """读取中文字段，若为空则回退到旧英文字段名。"""
+    value = raw_config.get(cn_key)
+    if value is not None:
+        return value
+    old_key = _FIELD_COMPAT.get(cn_key)
+    if old_key:
+        return raw_config.get(old_key, default)
+    return default
+
+
 def news_config_from_mapping(raw_config: Mapping[str, Any]) -> NewsConfig:
     dailyhot_base_url = (
-        str(raw_config.get("dailyhot_base_url", "") or "").strip() or DEFAULT_DAILYHOT_BASE_URL
+        str(_cfg(raw_config, "每日热榜地址") or "").strip() or DEFAULT_DAILYHOT_BASE_URL
     )
-    source_tokens = _coerce_source_tokens(raw_config.get("source_ids"))
+    custom_registry = _parse_custom_sources(_cfg(raw_config, "自定义源"), dailyhot_base_url)
+    source_tokens = _coerce_source_tokens(_cfg(raw_config, "新闻源"))
 
-    legacy_rss_url = str(raw_config.get("rss_url", "") or "").strip()
+    legacy_rss_url = str(_cfg(raw_config, "旧版RSS地址") or "").strip()
     if not source_tokens and legacy_rss_url and legacy_rss_url != LEGACY_GOOGLE_RSS_URL:
         source_tokens = [legacy_rss_url]
 
     if not source_tokens:
         source_tokens = _default_source_tokens()
 
-    sources = tuple(_resolve_source_token(token, dailyhot_base_url) for token in source_tokens)
+    sources = tuple(
+        _resolve_source_token(token, dailyhot_base_url, custom_registry)
+        for token in source_tokens
+    )
     return NewsConfig(
         sources=sources,
-        max_items=_coerce_int(raw_config.get("max_items"), DEFAULT_MAX_ITEMS),
-        request_timeout_seconds=_coerce_int(raw_config.get("request_timeout_seconds"), DEFAULT_TIMEOUT_SECONDS),
-        enable_fallback_commands=_coerce_bool(raw_config.get("enable_fallback_commands"), True),
+        max_items=_coerce_int(_cfg(raw_config, "最大条数"), DEFAULT_MAX_ITEMS),
+        request_timeout_seconds=_coerce_int(_cfg(raw_config, "请求超时"), DEFAULT_TIMEOUT_SECONDS),
+        enable_fallback_commands=_coerce_bool(_cfg(raw_config, "启用命令", True), True),
     )
 
 

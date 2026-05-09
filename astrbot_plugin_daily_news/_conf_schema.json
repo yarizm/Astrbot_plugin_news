@@ -1,31 +1,36 @@
 {
-  "source_ids": {
-    "description": "Ordered news sources. Supports built-ins like 36kr-newsflash, ithome, cnbeta, qq-news-hot, thepaper-hot; raw RSS URLs; or dailyhot:<route>.",
+  "新闻源": {
+    "description": "新闻来源列表，用逗号或换行分隔。支持内置源（如 36kr-newsflash、ithome、cnbeta、qq-news-hot、thepaper-hot）、自定义源 ID、RSS 地址（rss:https://...）或 DailyHot 路由（dailyhot:zhihu）。",
     "type": "string",
     "default": "36kr-newsflash,ithome,cnbeta"
   },
-  "dailyhot_base_url": {
-    "description": "Base URL for optional DailyHot-compatible public hotlist endpoints",
+  "自定义源": {
+    "description": "自定义新闻源定义（JSON 数组）。每个元素需包含 id、name、type（rss 或 dailyhot）、endpoint。定义后可在「新闻源」中用 id 引用。注意：id 不能与内置源重名，也不能以 rss:、dailyhot:、http://、https:// 开头。",
+    "type": "string",
+    "default": "[]"
+  },
+  "每日热榜地址": {
+    "description": "DailyHot 兼容 API 的基地址，用于解析 dailyhot 类型的新闻源。",
     "type": "string",
     "default": "https://api-hot.imsyy.top"
   },
-  "rss_url": {
-    "description": "Legacy single RSS URL override. Kept for backward compatibility when source_ids is not set.",
+  "旧版RSS地址": {
+    "description": "旧版单 RSS 地址兼容字段。仅在「新闻源」为空时生效，建议优先使用「新闻源」字段。",
     "type": "string",
     "default": ""
   },
-  "max_items": {
-    "description": "Maximum number of headlines to return",
+  "最大条数": {
+    "description": "每次返回的新闻条目上限。",
     "type": "int",
     "default": 5
   },
-  "request_timeout_seconds": {
-    "description": "HTTP timeout in seconds",
+  "请求超时": {
+    "description": "HTTP 请求超时时间（秒）。",
     "type": "int",
     "default": 10
   },
-  "enable_fallback_commands": {
-    "description": "Enable /news fallback commands",
+  "启用命令": {
+    "description": "是否启用 /news today 命令入口。关闭后仅 LLM Tool 可用。",
     "type": "bool",
     "default": true
   }
