@@ -1,14 +1,14 @@
 """AstrBot 新闻插件入口：仅包含 AstrBot 兼容层和插件类。
 
 核心逻辑（数据模型、配置解析、网络抓取、解析、持久化）
-均位于 core/ 子包中。
+均位于 daily_news_core/ 子包中。
 """
 from __future__ import annotations
 
 import os
 from typing import Any
 
-from .core import (
+from daily_news_core import (
     CATEGORY_NAMES,
     DEFAULT_DAILYHOT_BASE_URL,
     NewsConfig,
@@ -87,7 +87,7 @@ except ModuleNotFoundError:  # pragma: no cover - local fallback for development
 # ---------------------------------------------------------------------------
 
 @register(
-    "astrbot_plugin_daily_news",
+    "astrbot_plugin_news",
     "YARIZM",
     "Daily News plugin for AstrBot",
     "0.4.0",
@@ -102,7 +102,7 @@ class DailyNewsPlugin(Star):
         data_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             "data",
-            "astrbot_plugin_daily_news",
+            "astrbot_plugin_news",
         )
         self._history = NewsHistory(data_dir)
 

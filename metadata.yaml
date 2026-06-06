@@ -1,4 +1,4 @@
-name: astrbot_plugin_daily_news
+name: astrbot_plugin_news
 display_name: Daily News
 desc: Multi-source AstrBot news plugin with domestic RSS defaults and optional DailyHot-compatible fallback
 version: 0.4.0
