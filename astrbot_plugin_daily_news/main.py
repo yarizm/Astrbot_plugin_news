@@ -1,15 +1,28 @@
+"""AstrBot 新闻插件入口：仅包含 AstrBot 兼容层和插件类。
+
+核心逻辑（数据模型、配置解析、网络抓取、解析、持久化）
+均位于 core/ 子包中。
+"""
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-import html
-import json
-import logging
-import re
-from dataclasses import dataclass
+import os
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
-from xml.etree import ElementTree
+
+from .core import (
+    CATEGORY_NAMES,
+    DEFAULT_DAILYHOT_BASE_URL,
+    NewsConfig,
+    NewsFeedClient,
+    NewsFetchError,
+    NewsHeadline,
+    NewsHistory,
+    coerce_int,
+    news_config_from_mapping,
+    resolve_source_token,
+)
+
+# 中文分类名 → 英文 ID 反向映射
+_CATEGORY_ALIAS: dict[str, str] = {v: k for k, v in CATEGORY_NAMES.items()}
 
 try:
     from astrbot.api import AstrBotConfig
@@ -69,499 +82,31 @@ except ModuleNotFoundError:  # pragma: no cover - local fallback for development
     filter = _FallbackFilter()
 
 
-LEGACY_GOOGLE_RSS_URL = "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-
-_logger = logging.getLogger(__name__)
-
-# 中文字段名 → 旧英文字段名，用于向后兼容
-_FIELD_COMPAT: dict[str, str] = {
-    "新闻源": "source_ids",
-    "自定义源": "custom_sources",
-    "每日热榜地址": "dailyhot_base_url",
-    "旧版RSS地址": "rss_url",
-    "最大条数": "max_items",
-    "请求超时": "request_timeout_seconds",
-    "启用命令": "enable_fallback_commands",
-}
-
-DEFAULT_SOURCE_IDS = (
-    "36kr-newsflash",
-    "ithome",
-    "cnbeta",
-)
-DEFAULT_DAILYHOT_BASE_URL = "https://api-hot.imsyy.top"
-DEFAULT_MAX_ITEMS = 5
-DEFAULT_TIMEOUT_SECONDS = 10
-
-
-@dataclass(frozen=True)
-class NewsSource:
-    source_id: str
-    display_name: str
-    source_type: str
-    endpoint: str
-    description: str = ""
-
-
-@dataclass(frozen=True)
-class NewsConfig:
-    sources: tuple[NewsSource, ...]
-    max_items: int = DEFAULT_MAX_ITEMS
-    request_timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
-    enable_fallback_commands: bool = True
-
-
-@dataclass(frozen=True)
-class NewsHeadline:
-    title: str
-    link: str
-    published_at: str = ""
-    source: str = ""
-
-
-@dataclass(frozen=True)
-class NewsSourceResult:
-    feed_title: str
-    items: tuple[NewsHeadline, ...]
-
-
-class NewsFetchError(RuntimeError):
-    def __init__(self, messages: list[str]):
-        self.messages = messages
-        super().__init__("；".join(messages))
-
-
-BUILTIN_SOURCES: dict[str, tuple[str, str, str, str]] = {
-    "36kr-newsflash": (
-        "36kr-newsflash",
-        "36氪快讯",
-        "rss",
-        "https://36kr.com/feed-newsflash",
-    ),
-    "36kr": (
-        "36kr",
-        "36氪综合资讯",
-        "rss",
-        "https://36kr.com/feed",
-    ),
-    "ithome": (
-        "ithome",
-        "IT之家",
-        "rss",
-        "https://www.ithome.com/rss/",
-    ),
-    "cnbeta": (
-        "cnbeta",
-        "cnBeta",
-        "rss",
-        "http://rss.cnbeta.com/",
-    ),
-    "qq-news-hot": (
-        "qq-news-hot",
-        "腾讯新闻热榜",
-        "dailyhot",
-        "qq-news",
-    ),
-    "thepaper-hot": (
-        "thepaper-hot",
-        "澎湃新闻热榜",
-        "dailyhot",
-        "thepaper",
-    ),
-}
-
-
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    normalized = str(value).strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
-def _coerce_int(value: Any, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
-def _coerce_source_tokens(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        raw_items = re.split(r"[\r\n,;]+", value)
-        return [item.strip() for item in raw_items if item.strip()]
-    if isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray, str)):
-        tokens = []
-        for item in value:
-            token = str(item).strip()
-            if token:
-                tokens.append(token)
-        return tokens
-    token = str(value).strip()
-    return [token] if token else []
-
-
-def _build_dailyhot_url(base_url: str, route: str) -> str:
-    return f"{base_url.rstrip('/')}/{route.lstrip('/')}"
-
-
-def _parse_custom_sources(value: Any, dailyhot_base_url: str) -> dict[str, NewsSource]:
-    if not value:
-        return {}
-    try:
-        items = json.loads(value) if isinstance(value, str) else value
-    except (json.JSONDecodeError, TypeError) as exc:
-        _logger.warning("自定义源 JSON 解析失败: %s", exc)
-        return {}
-    if not isinstance(items, list):
-        _logger.warning("自定义源不是 JSON 数组，已忽略")
-        return {}
-
-    registry: dict[str, NewsSource] = {}
-    for item in items:
-        if not isinstance(item, Mapping):
-            _logger.warning("自定义源条目不是对象，已跳过: %r", item)
-            continue
-        source_id = str(item.get("id") or "").strip()
-        display_name = str(item.get("name") or "").strip()
-        source_type = str(item.get("type") or "").strip().lower()
-        endpoint = str(item.get("endpoint") or "").strip()
-        if not source_id or not endpoint or source_type not in {"rss", "dailyhot"}:
-            _logger.warning("自定义源条目缺少必填字段或 type 无效，已跳过: %r", item)
-            continue
-        if source_id in BUILTIN_SOURCES:
-            _logger.warning("自定义源 ID %r 与内置源冲突，已跳过", source_id)
-            continue
-        if not display_name:
-            display_name = source_id
-        if source_type == "dailyhot":
-            endpoint = _build_dailyhot_url(dailyhot_base_url, endpoint)
-        registry[source_id] = NewsSource(
-            source_id=source_id,
-            display_name=display_name,
-            source_type=source_type,
-            endpoint=endpoint,
-        )
-    return registry
-
-
-def _resolve_source_token(
-    token: str,
-    dailyhot_base_url: str,
-    custom_registry: dict[str, NewsSource] | None = None,
-) -> NewsSource:
-    builtin = BUILTIN_SOURCES.get(token)
-    if builtin is not None:
-        source_id, display_name, source_type, endpoint = builtin
-        if source_type == "dailyhot":
-            endpoint = _build_dailyhot_url(dailyhot_base_url, endpoint)
-        return NewsSource(
-            source_id=source_id,
-            display_name=display_name,
-            source_type=source_type,
-            endpoint=endpoint,
-        )
-
-    if custom_registry:
-        custom = custom_registry.get(token)
-        if custom is not None:
-            return custom
-
-    if token.startswith("dailyhot:"):
-        route = token.split(":", 1)[1].strip()
-        if not route:
-            raise ValueError("dailyhot source is missing a route.")
-        return NewsSource(
-            source_id=token,
-            display_name=f"DailyHot/{route}",
-            source_type="dailyhot",
-            endpoint=_build_dailyhot_url(dailyhot_base_url, route),
-        )
-
-    if token.startswith("rss:"):
-        url = token.split(":", 1)[1].strip()
-        if not url:
-            raise ValueError("rss source is missing a URL.")
-        return NewsSource(
-            source_id=token,
-            display_name=url,
-            source_type="rss",
-            endpoint=url,
-        )
-
-    if token.startswith(("http://", "https://")):
-        return NewsSource(
-            source_id=token,
-            display_name=token,
-            source_type="rss",
-            endpoint=token,
-        )
-
-    raise ValueError(f"Unsupported news source token: {token}")
-
-
-def _default_source_tokens() -> list[str]:
-    return list(DEFAULT_SOURCE_IDS)
-
-
-def _cfg(raw_config: Mapping[str, Any], cn_key: str, default: Any = "") -> Any:
-    """读取中文字段，若为空则回退到旧英文字段名。"""
-    value = raw_config.get(cn_key)
-    if value is not None:
-        return value
-    old_key = _FIELD_COMPAT.get(cn_key)
-    if old_key:
-        return raw_config.get(old_key, default)
-    return default
-
-
-def news_config_from_mapping(raw_config: Mapping[str, Any]) -> NewsConfig:
-    dailyhot_base_url = (
-        str(_cfg(raw_config, "每日热榜地址") or "").strip() or DEFAULT_DAILYHOT_BASE_URL
-    )
-    custom_registry = _parse_custom_sources(_cfg(raw_config, "自定义源"), dailyhot_base_url)
-    source_tokens = _coerce_source_tokens(_cfg(raw_config, "新闻源"))
-
-    legacy_rss_url = str(_cfg(raw_config, "旧版RSS地址") or "").strip()
-    if not source_tokens and legacy_rss_url and legacy_rss_url != LEGACY_GOOGLE_RSS_URL:
-        source_tokens = [legacy_rss_url]
-
-    if not source_tokens:
-        source_tokens = _default_source_tokens()
-
-    sources = tuple(
-        _resolve_source_token(token, dailyhot_base_url, custom_registry)
-        for token in source_tokens
-    )
-    return NewsConfig(
-        sources=sources,
-        max_items=_coerce_int(_cfg(raw_config, "最大条数"), DEFAULT_MAX_ITEMS),
-        request_timeout_seconds=_coerce_int(_cfg(raw_config, "请求超时"), DEFAULT_TIMEOUT_SECONDS),
-        enable_fallback_commands=_coerce_bool(_cfg(raw_config, "启用命令", True), True),
-    )
-
-
-class NewsFeedClient:
-    def __init__(self, config: NewsConfig):
-        self.config = config
-
-    def fetch_headlines(self, limit: int | None = None) -> tuple[str, list[NewsHeadline]]:
-        max_items = _coerce_int(limit, self.config.max_items) if limit else self.config.max_items
-        if not self.config.sources:
-            raise NewsFetchError(["未配置可用的新闻源。"])
-
-        source_limit = max(1, (max_items + len(self.config.sources) - 1) // len(self.config.sources))
-        per_source_results: list[tuple[NewsSource, NewsSourceResult]] = []
-        errors: list[str] = []
-
-        for source in self.config.sources:
-            try:
-                result = self._fetch_from_source(source, source_limit)
-            except (HTTPError, URLError, ValueError, json.JSONDecodeError, ElementTree.ParseError) as exc:
-                errors.append(f"{source.display_name} 失败：{self._format_exception(exc)}")
-                continue
-            except Exception as exc:
-                errors.append(f"{source.display_name} 失败：{exc}")
-                continue
-
-            if result.items:
-                per_source_results.append((source, result))
-            else:
-                errors.append(f"{source.display_name} 没有返回可展示的头条。")
-
-        merged_items, used_titles = self._merge_results(per_source_results, max_items)
-        if merged_items:
-            feed_title = "今日新闻（来源：" + "、".join(used_titles) + "）"
-            return feed_title, merged_items
-
-        raise NewsFetchError(errors or ["所有新闻源都没有返回可展示内容。"])
-
-    def _fetch_from_source(self, source: NewsSource, limit: int) -> NewsSourceResult:
-        payload = self._read(source.endpoint)
-        if source.source_type == "dailyhot":
-            return self._parse_dailyhot_source(source, payload, limit)
-        return self._parse_feed_source(source, payload, limit)
-
-    def _read(self, url: str) -> bytes:
-        request = Request(url, headers={"User-Agent": "AstrBotDailyNews/0.2"})
-        with urlopen(request, timeout=self.config.request_timeout_seconds) as response:
-            return response.read()
-
-    def _parse_dailyhot_source(self, source: NewsSource, payload: bytes, limit: int) -> NewsSourceResult:
-        data = json.loads(payload.decode("utf-8", errors="replace"))
-        feed_title = self._clean_text(str(data.get("title") or source.display_name))
-        update_time = self._clean_text(str(data.get("updateTime") or ""))
-
-        items: list[NewsHeadline] = []
-        for entry in data.get("data") or []:
-            if not isinstance(entry, Mapping):
-                continue
-            title = self._clean_text(str(entry.get("title") or ""))
-            link = self._clean_text(str(entry.get("url") or entry.get("mobileUrl") or ""))
-            if not title:
-                continue
-            items.append(
-                NewsHeadline(
-                    title=title,
-                    link=link,
-                    published_at=update_time,
-                    source=feed_title,
-                )
-            )
-            if len(items) >= limit:
-                break
-        return NewsSourceResult(feed_title=feed_title, items=tuple(items))
-
-    def _parse_feed_source(self, source: NewsSource, payload: bytes, limit: int) -> NewsSourceResult:
-        root = ElementTree.fromstring(payload)
-        if self._local_name(root.tag) == "feed":
-            return self._parse_atom_feed(source, root, limit)
-        return self._parse_rss_feed(source, root, limit)
-
-    def _parse_rss_feed(self, source: NewsSource, root: ElementTree.Element, limit: int) -> NewsSourceResult:
-        channel = self._find_child(root, "channel")
-        if channel is None and self._local_name(root.tag) == "channel":
-            channel = root
-        if channel is None:
-            raise ValueError("RSS feed format is not supported or contains no channel node.")
-
-        feed_title = self._clean_text(self._child_text(channel, "title")) or source.display_name
-        items: list[NewsHeadline] = []
-        for item in self._iter_children(channel, "item"):
-            title = self._clean_text(self._child_text(item, "title"))
-            link = self._clean_text(self._child_text(item, "link"))
-            published_at = self._clean_text(self._child_text(item, "pubDate", "published"))
-            source_name = self._clean_text(self._child_text(item, "source")) or source.display_name
-            if not title:
-                continue
-            items.append(
-                NewsHeadline(
-                    title=title,
-                    link=link,
-                    published_at=published_at,
-                    source=source_name,
-                )
-            )
-            if len(items) >= limit:
-                break
-        return NewsSourceResult(feed_title=feed_title, items=tuple(items))
-
-    def _parse_atom_feed(self, source: NewsSource, root: ElementTree.Element, limit: int) -> NewsSourceResult:
-        feed_title = self._clean_text(self._child_text(root, "title")) or source.display_name
-        items: list[NewsHeadline] = []
-        for entry in self._iter_children(root, "entry"):
-            title = self._clean_text(self._child_text(entry, "title"))
-            link = self._extract_atom_link(entry)
-            published_at = self._clean_text(self._child_text(entry, "updated", "published"))
-            if not title:
-                continue
-            items.append(
-                NewsHeadline(
-                    title=title,
-                    link=link,
-                    published_at=published_at,
-                    source=source.display_name,
-                )
-            )
-            if len(items) >= limit:
-                break
-        return NewsSourceResult(feed_title=feed_title, items=tuple(items))
-
-    @staticmethod
-    def _merge_results(
-        per_source_results: list[tuple[NewsSource, NewsSourceResult]],
-        max_items: int,
-    ) -> tuple[list[NewsHeadline], list[str]]:
-        merged_items: list[NewsHeadline] = []
-        used_titles: list[str] = []
-        seen: set[str] = set()
-        item_lists = [list(result.items) for _, result in per_source_results]
-
-        while len(merged_items) < max_items and any(item_lists):
-            for index, items in enumerate(item_lists):
-                if not items:
-                    continue
-                item = items.pop(0)
-                dedupe_key = (item.link or item.title).strip().lower()
-                if dedupe_key in seen:
-                    continue
-                seen.add(dedupe_key)
-                merged_items.append(item)
-                source_title = per_source_results[index][1].feed_title or per_source_results[index][0].display_name
-                if source_title not in used_titles:
-                    used_titles.append(source_title)
-                if len(merged_items) >= max_items:
-                    break
-        return merged_items, used_titles
-
-    @staticmethod
-    def _iter_children(node: ElementTree.Element, local_name: str) -> list[ElementTree.Element]:
-        return [child for child in list(node) if NewsFeedClient._local_name(child.tag) == local_name]
-
-    @staticmethod
-    def _find_child(node: ElementTree.Element, local_name: str) -> ElementTree.Element | None:
-        for child in list(node):
-            if NewsFeedClient._local_name(child.tag) == local_name:
-                return child
-        return None
-
-    @staticmethod
-    def _child_text(node: ElementTree.Element, *names: str) -> str:
-        for child in list(node):
-            if NewsFeedClient._local_name(child.tag) in names and child.text:
-                return child.text
-        return ""
-
-    @staticmethod
-    def _extract_atom_link(node: ElementTree.Element) -> str:
-        for child in list(node):
-            if NewsFeedClient._local_name(child.tag) != "link":
-                continue
-            href = child.attrib.get("href", "")
-            rel = child.attrib.get("rel", "")
-            if href and rel in {"", "alternate"}:
-                return href
-        return ""
-
-    @staticmethod
-    def _local_name(tag: str) -> str:
-        return tag.rsplit("}", 1)[-1]
-
-    @staticmethod
-    def _clean_text(value: str) -> str:
-        cleaned = html.unescape(value or "").strip()
-        cleaned = re.sub(r"<[^>]+>", "", cleaned)
-        return re.sub(r"\s+", " ", cleaned).strip()
-
-    @staticmethod
-    def _format_exception(exc: Exception) -> str:
-        if isinstance(exc, HTTPError):
-            return f"HTTP {exc.code}"
-        if isinstance(exc, URLError):
-            return str(getattr(exc, "reason", exc))
-        return str(exc)
-
+# ---------------------------------------------------------------------------
+# 插件入口
+# ---------------------------------------------------------------------------
 
 @register(
     "astrbot_plugin_daily_news",
     "YARIZM",
     "Daily News plugin for AstrBot",
-    "0.2.0",
+    "0.4.0",
     "https://github.com/yarizm/EuxrvshPVPBOTv0.01",
 )
 class DailyNewsPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
-        self.config = news_config_from_mapping(config or {})
+        self.config: NewsConfig = news_config_from_mapping(config or {})
         self.client = NewsFeedClient(self.config)
+        # 数据持久化目录
+        data_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "data",
+            "astrbot_plugin_daily_news",
+        )
+        self._history = NewsHistory(data_dir)
+
+    # —— 命令 ——
 
     @filter.command_group("news")
     def news(self):
@@ -578,8 +123,55 @@ class DailyNewsPlugin(Star):
             yield event.plain_result("管理员已关闭 /news 命令入口。")
             event.stop_event()
             return
-        yield event.plain_result(self._fetch_and_render(limit if limit > 0 else None))
+        yield event.plain_result(await self._fetch_and_render(limit if limit > 0 else None))
         event.stop_event()
+
+    @news.command("sources")
+    async def news_sources(self, event: AstrMessageEvent):
+        """列出所有已配置的新闻源。"""
+        if not self.config.enable_fallback_commands:
+            yield event.plain_result("管理员已关闭 /news 命令入口。")
+            event.stop_event()
+            return
+        yield event.plain_result(self._render_sources_list())
+        event.stop_event()
+
+    @news.command("category")
+    async def news_category(self, event: AstrMessageEvent, category: str = "", limit: int = 0):
+        """按分类获取新闻。分类：tech/social/entertainment/finance/news"""
+        if not self.config.enable_fallback_commands:
+            yield event.plain_result("管理员已关闭 /news 命令入口。")
+            event.stop_event()
+            return
+        if not category:
+            cats = "、".join(f"{k}({v})" for k, v in CATEGORY_NAMES.items())
+            yield event.plain_result(f"请指定分类：{cats}\n用法：/news category <分类> [数量]")
+            event.stop_event()
+            return
+        resolved = self._resolve_category(category)
+        if resolved is None:
+            cats = "、".join(f"{k}({v})" for k, v in CATEGORY_NAMES.items())
+            yield event.plain_result(f"未知分类 {category!r}。可用：{cats}")
+            event.stop_event()
+            return
+        yield event.plain_result(
+            await self._fetch_and_render_category(resolved, limit if limit > 0 else None)
+        )
+        event.stop_event()
+
+    @news.command("new")
+    async def news_new(self, event: AstrMessageEvent, limit: int = 0):
+        """仅获取自上次查询以来的新条目（去重历史）。"""
+        if not self.config.enable_fallback_commands:
+            yield event.plain_result("管理员已关闭 /news 命令入口。")
+            event.stop_event()
+            return
+        yield event.plain_result(
+            await self._fetch_and_render(limit if limit > 0 else None, only_new=True)
+        )
+        event.stop_event()
+
+    # —— LLM Tools ——
 
     @filter.llm_tool(name="news_fetch_daily_headlines")
     async def llm_fetch_daily_headlines(self, event: AstrMessageEvent, limit: int = 0):
@@ -589,12 +181,99 @@ class DailyNewsPlugin(Star):
         Args:
             limit(number): Optional max number of headlines to return. Uses plugin default when omitted or 0.
         """
-        safe_limit = _coerce_int(limit, 0)
-        return self._fetch_and_render(safe_limit if safe_limit > 0 else None)
+        safe_limit = coerce_int(limit, 0)
+        return await self._fetch_and_render(safe_limit if safe_limit > 0 else None)
 
-    def _fetch_and_render(self, limit: int | None) -> str:
+    @filter.llm_tool(name="news_list_available_sources")
+    async def llm_list_sources(self, event: AstrMessageEvent):
+        """List all currently configured news sources with their IDs, names, types, and categories.
+        Use when the user asks what news sources are available, or wants to know what can be fetched.
+        Common requests include: 有哪些新闻源, 可以获取哪些新闻, 支持什么平台.
+        """
+        sources = self.client.get_all_sources_info()
+        if not sources:
+            return "当前没有配置任何新闻源。"
+        lines = ["当前已配置的新闻源："]
+        for s in sources:
+            lines.append(f"  - {s['name']}（ID: {s['id']}，类型: {s['type']}，分类: {s['category']}）")
+        cats = "、".join(f"{v}({k})" for k, v in CATEGORY_NAMES.items())
+        lines.append(f"\n可用分类：{cats}")
+        lines.append("你可以说「看看科技新闻」或「给我知乎热榜」来查询特定分类或来源。")
+        return "\n".join(lines)
+
+    @filter.llm_tool(name="news_fetch_by_category")
+    async def llm_fetch_by_category(self, event: AstrMessageEvent, category: str = "", limit: int = 0):
+        """Fetch headlines filtered by a specific category.
+        Use when the user asks for news in a specific topic area.
+        Categories: tech(科技), social(社交), entertainment(娱乐), finance(财经), news(综合资讯).
+        Common requests include: 科技新闻, 娱乐热点, 财经资讯, 有什么技术新闻.
+        Args:
+            category(string): Category ID. One of: tech, social, entertainment, finance, news.
+            limit(number): Optional max number of headlines. Uses plugin default when omitted or 0.
+        """
+        if not category:
+            cats = "、".join(f"{k}({v})" for k, v in CATEGORY_NAMES.items())
+            return f"请指定分类。可用分类：{cats}"
+        resolved = self._resolve_category(category)
+        if resolved is None:
+            cats = "、".join(f"{k}({v})" for k, v in CATEGORY_NAMES.items())
+            return f"未知分类 {category!r}。可用：{cats}"
+        safe_limit = coerce_int(limit, 0)
+        return await self._fetch_and_render_category(
+            resolved, safe_limit if safe_limit > 0 else None
+        )
+
+    @filter.llm_tool(name="news_fetch_from_source")
+    async def llm_fetch_from_source(self, event: AstrMessageEvent, source_id: str = "", limit: int = 0):
+        """Fetch headlines from a specific news source by its ID.
+        Use when the user asks for news from a particular source, e.g. "看看知乎热榜" or "给我微博热搜".
+        Args:
+            source_id(string): The source ID (e.g. weibo, zhihu, bilibili, ithome, 36kr-newsflash).
+            limit(number): Optional max number of headlines. Uses plugin default when omitted or 0.
+        """
+        if not source_id:
+            return "请指定新闻源 ID。可用源可通过 news_list_available_sources 工具查看。"
+
+        # 查找源：先查已配置，再尝试内联解析
+        source = None
+        for s in self.config.sources:
+            if s.source_id == source_id or s.display_name == source_id:
+                source = s
+                break
+        if source is None:
+            try:
+                source = resolve_source_token(source_id, DEFAULT_DAILYHOT_BASE_URL)
+            except ValueError:
+                available = "、".join(s.source_id for s in self.config.sources)
+                return f"未找到新闻源 {source_id!r}。可用源：{available}"
+
+        safe_limit = coerce_int(limit, 0)
+        max_items = safe_limit if safe_limit > 0 else self.config.max_items
         try:
-            feed_title, items = self.client.fetch_headlines(limit=limit)
+            result, error = await self.client.fetch_source(source, max_items)
+        except Exception as exc:
+            return f"获取 {source.display_name} 失败：{exc}"
+
+        if error:
+            return error
+        if result is None or not result.items:
+            return f"{source.display_name} 没有返回可展示的头条。"
+
+        return self._render_headlines(f"{source.display_name} 热榜", list(result.items))
+
+    # —— 内部方法 ——
+
+    @staticmethod
+    def _resolve_category(raw: str) -> str | None:
+        """将用户输入的分类名（中文或英文）解析为分类 ID。"""
+        raw = raw.strip().lower()
+        if raw in CATEGORY_NAMES:
+            return raw
+        return _CATEGORY_ALIAS.get(raw)
+
+    async def _fetch_and_render(self, limit: int | None, only_new: bool = False) -> str:
+        try:
+            feed_title, items = await self.client.fetch_headlines(limit=limit)
         except NewsFetchError as exc:
             details = "；".join(exc.messages[:3]) if exc.messages else "没有可用的新闻源。"
             return f"获取新闻失败：{details}"
@@ -604,7 +283,41 @@ class DailyNewsPlugin(Star):
         if not items:
             return "当前新闻源没有返回可展示的头条。"
 
+        if only_new:
+            # 先过滤新条目，再记录快照（避免 record_snapshot 提前污染 seen_links）
+            new_items = [item for item in items if self._history.is_new(item.link)]
+            self._history.record_snapshot(items)
+            if not new_items:
+                return "自上次查询以来没有新的新闻条目。"
+            items = new_items
+            feed_title = feed_title.replace("今日新闻", "今日新条目")
+        else:
+            self._history.record_snapshot(items)
+
         return self._render_headlines(feed_title, items)
+
+    async def _fetch_and_render_category(self, category: str, limit: int | None) -> str:
+        try:
+            feed_title, items = await self.client.fetch_headlines_by_category(
+                category, limit=limit,
+            )
+        except NewsFetchError as exc:
+            details = "；".join(exc.messages[:3]) if exc.messages else "获取失败。"
+            return f"获取分类新闻失败：{details}"
+        except Exception as exc:
+            return f"获取分类新闻失败：{exc}"
+
+        if not items:
+            return "该分类没有返回可展示的头条。"
+
+        self._history.record_snapshot(items)
+        return self._render_headlines(feed_title, items)
+
+    async def terminate(self) -> None:
+        """插件卸载时关闭 aiohttp session。"""
+        await self.client.close()
+
+    # —— 渲染 ——
 
     @staticmethod
     def _render_headlines(feed_title: str, items: list[NewsHeadline]) -> str:
@@ -612,25 +325,48 @@ class DailyNewsPlugin(Star):
         for index, item in enumerate(items, start=1):
             suffix = f" ({item.source})" if item.source else ""
             lines.append(f"{index}. {item.title}{suffix}")
+            if item.summary:
+                lines.append(f"   摘要：{item.summary}")
             if item.published_at:
                 lines.append(f"   发布时间：{item.published_at}")
             if item.link:
                 lines.append(f"   链接：{item.link}")
         return "\n".join(lines)
 
+    def _render_sources_list(self) -> str:
+        sources = self.client.get_all_sources_info()
+        if not sources:
+            return "当前没有配置任何新闻源。"
+        lines = ["已配置的新闻源："]
+        for s in sources:
+            lines.append(
+                f"  • {s['name']}（{s['id']}）"
+                f"  [{s['type']}]  [{s['category']}]"
+            )
+        cats = "、".join(f"{v}({k})" for k, v in CATEGORY_NAMES.items())
+        lines.append(f"\n可用分类：{cats}")
+        lines.append("\n用法：/news category <分类ID> [数量]")
+        return "\n".join(lines)
+
     def _help_text(self) -> str:
         source_names = "、".join(source.display_name for source in self.config.sources) or "未配置"
+        cats = "、".join(f"{v}({k})" for k, v in CATEGORY_NAMES.items())
         return "\n".join(
             [
                 "Daily News commands:",
-                "/news today [count]",
-                "/news help",
+                "/news today [count]      获取今日新闻",
+                "/news category <分类> [count]  按分类获取",
+                "/news new [count]        仅显示新条目",
+                "/news sources            查看新闻源列表",
+                "/news help               显示此帮助",
                 "",
                 f"当前新闻源：{source_names}",
+                f"可用分类：{cats}",
                 "",
                 "自然语言示例：",
-                "今天有什么新闻",
-                "给我一份今日快讯",
-                "抓取 3 条头条新闻",
+                "  今天有什么新闻",
+                "  看看科技新闻",
+                "  给我知乎热榜",
+                "  有哪些新闻源",
             ]
         )

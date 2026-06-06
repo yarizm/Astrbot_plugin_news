@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "astrbot_plugin_daily_news/**"
+      - ".github/workflows/**"
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint-and-check:
+    name: Lint & Syntax Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r astrbot_plugin_daily_news/requirements.txt
+          pip install ruff
+
+      - name: Ruff lint
+        run: |
+          ruff check astrbot_plugin_daily_news/ --select E,F,W --ignore E501
+
+      - name: Python syntax check
+        run: |
+          python -c "
+          import ast, pathlib, sys
+          files = list(pathlib.Path('astrbot_plugin_daily_news').rglob('*.py'))
+          errors = []
+          for f in files:
+              try:
+                  ast.parse(f.read_text(encoding='utf-8'))
+              except SyntaxError as e:
+                  errors.append(f'{f}: {e}')
+          if errors:
+              for e in errors:
+                  print(f'ERROR: {e}', file=sys.stderr)
+              sys.exit(1)
+          print(f'All {len(files)} files passed syntax check.')
+          "
+
+      - name: Import smoke test
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'astrbot_plugin_daily_news')
+          from core import (
+              NewsFeedClient,
+              news_config_from_mapping,
+              BUILTIN_SOURCES,
+              CATEGORY_NAMES,
+              NewsHistory,
+          )
+          cfg = news_config_from_mapping({})
+          assert len(cfg.sources) > 0, 'Default sources should not be empty'
+          assert len(BUILTIN_SOURCES) >= 16, f'Expected >= 16 builtin sources, got {len(BUILTIN_SOURCES)}'
+          assert len(CATEGORY_NAMES) >= 5, f'Expected >= 5 categories, got {len(CATEGORY_NAMES)}'
+          client = NewsFeedClient(cfg)
+          assert len(client.get_all_sources_info()) > 0
+          print('Import smoke test passed.')
+          "
+
+  json-schema-check:
+    name: Config Schema Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate _conf_schema.json
+        run: |
+          python -c "
+          import json, sys
+          try:
+              with open('astrbot_plugin_daily_news/_conf_schema.json', encoding='utf-8') as f:
+                  schema = json.load(f)
+              assert isinstance(schema, dict), 'Schema must be a dict'
+              required_fields = ['新闻源', '最大条数', '请求超时', '启用命令']
+              for field in required_fields:
+                  assert field in schema, f'Missing required field: {field}'
+              print(f'Schema valid: {len(schema)} fields.')
+          except Exception as e:
+              print(f'Schema error: {e}', file=sys.stderr)
+              sys.exit(1)
+          "

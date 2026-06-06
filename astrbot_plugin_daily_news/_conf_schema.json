@@ -1,6 +1,6 @@
 {
   "新闻源": {
-    "description": "新闻来源列表，用逗号或换行分隔。支持内置源（如 36kr-newsflash、ithome、cnbeta、qq-news-hot、thepaper-hot）、自定义源 ID、RSS 地址（rss:https://...）或 DailyHot 路由（dailyhot:zhihu）。",
+    "description": "新闻来源列表，用逗号或换行分隔。支持内置源（36kr-newsflash、36kr、ithome、cnbeta、qq-news-hot、thepaper-hot、weibo、zhihu、baidu、bilibili、toutiao、juejin、v2ex、sspai、huxiu、douyin）、自定义源 ID、RSS 地址（rss:https://...）或 DailyHot 路由（dailyhot:zhihu）。分类：tech(科技)/social(社交)/entertainment(娱乐)/finance(财经)/news(综合资讯)。",
     "type": "string",
     "default": "36kr-newsflash,ithome,cnbeta"
   },
@@ -33,5 +33,10 @@
     "description": "是否启用 /news today 命令入口。关闭后仅 LLM Tool 可用。",
     "type": "bool",
     "default": true
+  },
+  "缓存有效期": {
+    "description": "新闻缓存有效期（秒），设为 0 禁用缓存。默认 900 秒（15 分钟）。",
+    "type": "int",
+    "default": 900
   }
 }
