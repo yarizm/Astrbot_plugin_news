@@ -4,10 +4,7 @@ on:
   push:
     branches: [main, master]
     paths:
-      - "main.py"
-      - "core/**"
-      - "_conf_schema.json"
-      - "requirements.txt"
+      - "astrbot_plugin_daily_news/**"
       - ".github/workflows/**"
   pull_request:
     branches: [main, master]
@@ -32,19 +29,18 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r astrbot_plugin_daily_news/requirements.txt
           pip install ruff
 
       - name: Ruff lint
         run: |
-          ruff check main.py core/ --select E,F,W --ignore E501
+          ruff check astrbot_plugin_daily_news/ --select E,F,W --ignore E501
 
       - name: Python syntax check
         run: |
           python -c "
           import ast, pathlib, sys
-          files = list(pathlib.Path('.').rglob('*.py'))
-          files = [f for f in files if '.venv' not in f.parts and '.git' not in f.parts]
+          files = list(pathlib.Path('astrbot_plugin_daily_news').rglob('*.py'))
           errors = []
           for f in files:
               try:
@@ -62,7 +58,7 @@ jobs:
         run: |
           python -c "
           import sys
-          sys.path.insert(0, '.')
+          sys.path.insert(0, 'astrbot_plugin_daily_news')
           from core import (
               NewsFeedClient,
               news_config_from_mapping,
@@ -91,7 +87,7 @@ jobs:
           python -c "
           import json, sys
           try:
-              with open('_conf_schema.json', encoding='utf-8') as f:
+              with open('astrbot_plugin_daily_news/_conf_schema.json', encoding='utf-8') as f:
                   schema = json.load(f)
               assert isinstance(schema, dict), 'Schema must be a dict'
               required_fields = ['新闻源', '最大条数', '请求超时', '启用命令']
