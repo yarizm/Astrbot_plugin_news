@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .core import (
+from core import (
     CATEGORY_NAMES,
     DEFAULT_DAILYHOT_BASE_URL,
     NewsConfig,
