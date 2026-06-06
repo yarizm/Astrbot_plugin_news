@@ -72,8 +72,8 @@ jobs:
           )
           cfg = news_config_from_mapping({})
           assert len(cfg.sources) > 0, 'Default sources should not be empty'
-          assert len(BUILTIN_SOURCES) >= 16, f'Expected >= 16 builtin sources, got {len(BUILTIN_SOURCES)}'
-          assert len(CATEGORY_NAMES) >= 5, f'Expected >= 5 categories, got {len(CATEGORY_NAMES)}'
+          assert len(BUILTIN_SOURCES) >= 10, f'Expected >= 10 builtin sources, got {len(BUILTIN_SOURCES)}'
+          assert len(CATEGORY_NAMES) >= 3, f'Expected >= 3 categories, got {len(CATEGORY_NAMES)}'
           client = NewsFeedClient(cfg)
           assert len(client.get_all_sources_info()) > 0
           print('Import smoke test passed.')

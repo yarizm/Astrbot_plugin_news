@@ -57,8 +57,6 @@ BUILTIN_SOURCES: dict[str, tuple[str, str, str, str, str]] = {
 # 分类显示名称（中文）
 CATEGORY_NAMES: dict[str, str] = {
     "tech": "科技",
-    "social": "社交",
     "entertainment": "娱乐",
-    "finance": "财经",
     "news": "综合资讯",
 }
