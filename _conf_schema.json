@@ -1,6 +1,6 @@
 {
   "新闻源": {
-    "description": "新闻来源列表，用逗号或换行分隔。支持内置源（36kr-newsflash、36kr、ithome、cnbeta、qq-news-hot、thepaper-hot、weibo、zhihu、baidu、bilibili、toutiao、juejin、v2ex、sspai、huxiu、douyin）、自定义源 ID、RSS 地址（rss:https://...）或 DailyHot 路由（dailyhot:zhihu）。分类：tech(科技)/social(社交)/entertainment(娱乐)/finance(财经)/news(综合资讯)。",
+    "description": "新闻来源列表，用逗号或换行分隔。支持内置源（36kr-newsflash、36kr、ithome、cnbeta、v2ex、thepaper-hot、toutiao、douyin、juejin、sspai）、自定义源 ID、RSS 地址（rss:https://...）或 DailyHot 路由（dailyhot:zhihu）。分类：tech(科技)/entertainment(娱乐)/news(综合资讯)。",
     "type": "string",
     "default": "36kr-newsflash,ithome,cnbeta"
   },
@@ -10,9 +10,9 @@
     "default": "[]"
   },
   "每日热榜地址": {
-    "description": "DailyHot 兼容 API 的基地址，用于解析 dailyhot 类型的新闻源。",
+    "description": "DailyHot 兼容 API 的基地址，用于解析 dailyhot 类型的新闻源。默认使用 Vercel 公共部署，如需完整路由（weibo/zhihu/bilibili 等）请自行部署 DailyHot API 并填入地址。",
     "type": "string",
-    "default": "https://api-hot.imsyy.top"
+    "default": "https://dailyhot-api.vercel.app"
   },
   "旧版RSS地址": {
     "description": "旧版单 RSS 地址兼容字段。仅在「新闻源」为空时生效，建议优先使用「新闻源」字段。",

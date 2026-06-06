@@ -15,7 +15,7 @@ DEFAULT_SOURCE_IDS = (
     "ithome",
     "cnbeta",
 )
-DEFAULT_DAILYHOT_BASE_URL = "https://api-hot.imsyy.top"
+DEFAULT_DAILYHOT_BASE_URL = "https://dailyhot-api.vercel.app"
 DEFAULT_MAX_ITEMS = 5
 DEFAULT_TIMEOUT_SECONDS = 10
 DEFAULT_CACHE_TTL_SECONDS = 900  # 15 分钟

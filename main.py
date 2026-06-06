@@ -228,7 +228,7 @@ class DailyNewsPlugin(Star):
         """Fetch headlines from a specific news source by its ID.
         Use when the user asks for news from a particular source, e.g. "看看知乎热榜" or "给我微博热搜".
         Args:
-            source_id(string): The source ID (e.g. weibo, zhihu, bilibili, ithome, 36kr-newsflash).
+            source_id(string): The source ID (e.g. douyin, juejin, v2ex, ithome, 36kr-newsflash).
             limit(number): Optional max number of headlines. Uses plugin default when omitted or 0.
         """
         if not source_id:
