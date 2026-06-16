@@ -10,6 +10,7 @@ from xml.etree import ElementTree
 
 import aiohttp
 
+from .cache_backend import CacheBackend, CacheEntry, MemoryCache
 from .config import coerce_int
 from .models import (
     MAX_RETRIES,
@@ -35,6 +36,7 @@ _logger = logging.getLogger(__name__)
 class _CacheEntry:
     result: NewsSourceResult
     fetched_at: float  # time.monotonic()
+    ttl: int  # 该条目的 TTL（秒）
 
 
 @dataclass
@@ -44,10 +46,10 @@ class _SourceHealth:
 
 
 class NewsFeedClient:
-    def __init__(self, config: NewsConfig):
+    def __init__(self, config: NewsConfig, cache_backend: CacheBackend | None = None):
         self.config = config
         self._session: aiohttp.ClientSession | None = None
-        self._cache: dict[str, _CacheEntry] = {}
+        self._cache_backend: CacheBackend = cache_backend or MemoryCache()
         self._source_health: dict[str, _SourceHealth] = {}
 
     # —— aiohttp session 生命周期 ——
@@ -133,12 +135,14 @@ class NewsFeedClient:
         if not self._is_source_healthy(source.source_id):
             return source, None, f"{source.display_name} 连续失败 {SOURCE_HEALTH_THRESHOLD} 次，已被临时跳过。"
 
+        # 确定该源的 TTL：源建议 TTL > 全局 TTL
+        effective_ttl = source.suggested_ttl if source.suggested_ttl > 0 else self.config.cache_ttl_seconds
+
         # 缓存检查
-        if self.config.cache_ttl_seconds > 0:
-            cached = self._cache.get(source.source_id)
+        if effective_ttl > 0:
+            cached = await self._cache_backend.get(source.source_id)
             if cached is not None:
-                if time.monotonic() - cached.fetched_at < self.config.cache_ttl_seconds:
-                    return source, cached.result, None
+                return source, cached.data, None
 
         # 抓取
         try:
@@ -159,9 +163,9 @@ class NewsFeedClient:
 
         # 成功 → 缓存 + 重置健康
         self._record_source_success(source.source_id)
-        self._cache[source.source_id] = _CacheEntry(
-            result=result,
-            fetched_at=time.monotonic(),
+        await self._cache_backend.set(
+            source.source_id,
+            CacheEntry(data=result, fetched_at=time.time(), ttl=effective_ttl),
         )
         return source, result, None
 
@@ -196,13 +200,16 @@ class NewsFeedClient:
 
         merged_items, used_titles = self._merge_results(per_source_results, max_items)
 
-        # 降级：使用陈旧缓存
-        if not merged_items and self.config.cache_ttl_seconds > 0:
+        # 降级：使用陈旧缓存（跳过 TTL 检查）
+        if not merged_items:
             stale_results: list[tuple[NewsSource, NewsSourceResult]] = []
             for source in self.config.sources:
-                cached = self._cache.get(source.source_id)
-                if cached is not None and cached.result.items:
-                    stale_results.append((source, cached.result))
+                try:
+                    cached = await self._cache_backend.get(source.source_id)
+                    if cached is not None and cached.data and hasattr(cached.data, 'items') and cached.data.items:
+                        stale_results.append((source, cached.data))
+                except Exception:
+                    pass
             if stale_results:
                 merged_items, used_titles = self._merge_results(stale_results, max_items)
                 if merged_items:

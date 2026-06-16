@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>测试 Atom 源</title>
+  <link href="https://example.com"/>
+  <subtitle>用于单元测试的 Atom feed</subtitle>
+  <entry>
+    <title>Atom 第一条新闻</title>
+    <link href="https://example.com/atom/1"/>
+    <summary>这是 Atom 第一条新闻的摘要。</summary>
+    <published>2026-06-16T08:00:00+08:00</published>
+  </entry>
+  <entry>
+    <title>Atom 第二条新闻</title>
+    <link href="https://example.com/atom/2"/>
+    <summary>这是 Atom 第二条新闻的摘要。</summary>
+    <published>2026-06-16T09:00:00+08:00</published>
+  </entry>
+</feed>

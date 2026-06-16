@@ -1,6 +1,7 @@
 """core 包：新闻插件的核心逻辑。"""
 from __future__ import annotations
 
+from .cache_backend import CacheBackend, CacheEntry, MemoryCache, RedisCache, create_cache_backend
 from .client import NewsFeedClient
 from .config import (
     coerce_bool,
@@ -23,9 +24,19 @@ from .models import (
     NewsSourceResult,
 )
 from .parsers import clean_text, truncate_summary
+from .renderer import HeadlineRenderer, default_renderer
+from .scheduler import NewsScheduler, SubscriptionRecord
 from .sources import BUILTIN_SOURCES, CATEGORY_NAMES
+from .user_prefs import UserPrefs, UserPrefsStore
+from .webhook import WebhookConfig, WebhookHandler, WebhookPayload, WebhookStore, WebhookVerifier
 
 __all__ = [
+    # 缓存后端
+    "CacheBackend",
+    "CacheEntry",
+    "MemoryCache",
+    "RedisCache",
+    "create_cache_backend",
     # 客户端
     "NewsFeedClient",
     # 配置
@@ -53,4 +64,19 @@ __all__ = [
     "truncate_summary",
     # 持久化
     "NewsHistory",
+    # 调度器
+    "NewsScheduler",
+    "SubscriptionRecord",
+    # 用户偏好
+    "UserPrefs",
+    "UserPrefsStore",
+    # 渲染器
+    "HeadlineRenderer",
+    "default_renderer",
+    # Webhook
+    "WebhookConfig",
+    "WebhookHandler",
+    "WebhookPayload",
+    "WebhookStore",
+    "WebhookVerifier",
 ]

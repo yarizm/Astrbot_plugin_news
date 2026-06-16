@@ -36,6 +36,7 @@ class NewsSource:
     endpoint: str
     description: str = ""
     category: str = ""
+    suggested_ttl: int = 0  # 源建议的缓存 TTL（秒），0 表示使用全局配置
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,9 @@ class NewsConfig:
     request_timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     enable_fallback_commands: bool = True
     cache_ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS
+    enable_ai_summary: bool = False
+    ai_summary_prompt: str = "请用不超过30字概括以下新闻标题的核心内容："
+    redis_url: str = ""
 
 
 @dataclass(frozen=True)

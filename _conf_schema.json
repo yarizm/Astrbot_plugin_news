@@ -17,7 +17,8 @@
   "旧版RSS地址": {
     "description": "旧版单 RSS 地址兼容字段。仅在「新闻源」为空时生效，建议优先使用「新闻源」字段。",
     "type": "string",
-    "default": ""
+    "default": "",
+    "deprecated": true
   },
   "最大条数": {
     "description": "每次返回的新闻条目上限。",
@@ -38,5 +39,20 @@
     "description": "新闻缓存有效期（秒），设为 0 禁用缓存。默认 900 秒（15 分钟）。",
     "type": "int",
     "default": 900
+  },
+  "启用AI摘要": {
+    "description": "是否启用 AI 摘要功能。启用后将调用 AstrBot 的 LLM Provider 对新闻标题生成一句话摘要。需要 AstrBot 配置了 LLM Provider。",
+    "type": "bool",
+    "default": false
+  },
+  "AI摘要提示词": {
+    "description": "AI 摘要的提示词前缀，新闻标题会自动拼接在提示词之后。",
+    "type": "string",
+    "default": "请用不超过30字概括以下新闻标题的核心内容："
+  },
+  "Redis地址": {
+    "description": "Redis 缓存后端地址（可选）。为空使用内存缓存，填入 Redis URL（如 redis://localhost:6379/0）启用分布式缓存。",
+    "type": "string",
+    "default": ""
   }
 }

@@ -21,6 +21,9 @@ from .sources import BUILTIN_SOURCES
 
 _logger = logging.getLogger(__name__)
 
+# 默认 AI 摘要提示词
+DEFAULT_AI_SUMMARY_PROMPT = "请用不超过30字概括以下新闻标题的核心内容："
+
 # 中文字段名 → 旧英文字段名，用于向后兼容
 _FIELD_COMPAT: dict[str, str] = {
     "新闻源": "source_ids",
@@ -31,6 +34,9 @@ _FIELD_COMPAT: dict[str, str] = {
     "请求超时": "request_timeout_seconds",
     "启用命令": "enable_fallback_commands",
     "缓存有效期": "cache_ttl_seconds",
+    "启用AI摘要": "enable_ai_summary",
+    "AI摘要提示词": "ai_summary_prompt",
+    "Redis地址": "redis_url",
 }
 
 
@@ -132,7 +138,7 @@ def resolve_source_token(
     """将用户配置的 source token 解析为 NewsSource 实例。"""
     builtin = BUILTIN_SOURCES.get(token)
     if builtin is not None:
-        source_id, display_name, source_type, endpoint, category = builtin
+        source_id, display_name, source_type, endpoint, category, suggested_ttl = builtin
         if source_type == "dailyhot":
             endpoint = build_dailyhot_url(dailyhot_base_url, endpoint)
         return NewsSource(
@@ -141,6 +147,7 @@ def resolve_source_token(
             source_type=source_type,
             endpoint=endpoint,
             category=category,
+            suggested_ttl=suggested_ttl,
         )
 
     if custom_registry:
@@ -221,10 +228,23 @@ def news_config_from_mapping(raw_config: Mapping[str, Any]) -> NewsConfig:
         except ValueError as exc:
             _logger.warning("跳过无效新闻源 token %r: %s", token, exc)
     sources = tuple(sources_list)
+
+    # AI 摘要配置
+    enable_ai_summary = coerce_bool(_cfg(raw_config, "启用AI摘要", False), False)
+    ai_summary_prompt = str(
+        _cfg(raw_config, "AI摘要提示词", DEFAULT_AI_SUMMARY_PROMPT) or DEFAULT_AI_SUMMARY_PROMPT
+    )
+
+    # Redis 配置
+    redis_url = str(_cfg(raw_config, "Redis地址", "") or "").strip()
+
     return NewsConfig(
         sources=sources,
         max_items=coerce_int(_cfg(raw_config, "最大条数"), DEFAULT_MAX_ITEMS),
         request_timeout_seconds=coerce_int(_cfg(raw_config, "请求超时"), DEFAULT_TIMEOUT_SECONDS),
         enable_fallback_commands=coerce_bool(_cfg(raw_config, "启用命令", True), True),
         cache_ttl_seconds=coerce_int(_cfg(raw_config, "缓存有效期"), DEFAULT_CACHE_TTL_SECONDS),
+        enable_ai_summary=enable_ai_summary,
+        ai_summary_prompt=ai_summary_prompt,
+        redis_url=redis_url,
     )

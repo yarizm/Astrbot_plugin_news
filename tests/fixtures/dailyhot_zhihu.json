@@ -1,0 +1,26 @@
+{
+  "code": 200,
+  "data": [
+    {
+      "title": "如何看待今日热搜第一条？",
+      "desc": "这是知乎热榜第一条的描述内容。",
+      "hot": 1234567,
+      "url": "https://www.zhihu.com/question/123456",
+      "mobileUrl": "https://www.zhihu.com/question/123456"
+    },
+    {
+      "title": "有什么值得关注的科技新闻？",
+      "desc": "这是知乎热榜第二条的描述内容。",
+      "hot": 987654,
+      "url": "https://www.zhihu.com/question/789012",
+      "mobileUrl": "https://www.zhihu.com/question/789012"
+    },
+    {
+      "title": "如何评价最新的 AI 进展？",
+      "desc": "这是知乎热榜第三条的描述内容。",
+      "hot": 543210,
+      "url": "https://www.zhihu.com/question/345678",
+      "mobileUrl": "https://www.zhihu.com/question/345678"
+    }
+  ]
+}

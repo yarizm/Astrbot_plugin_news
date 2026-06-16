@@ -3,7 +3,7 @@ display_name: Daily News
 desc: Multi-source AstrBot news plugin with domestic RSS defaults and optional DailyHot-compatible fallback
 version: 0.4.0
 author: YARIZM
-repo: https://github.com/yarizm/EuxrvshPVPBOTv0.01
+repo: https://github.com/yarizm/Astrbot_plugin_news
 astrbot_version: ">=4.16,<5"
 support_platforms:
   - qq_official
