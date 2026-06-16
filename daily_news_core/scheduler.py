@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, time as dt_time
 from pathlib import Path
 from typing import Any, Awaitable, Callable

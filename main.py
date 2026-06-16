@@ -10,12 +10,9 @@ import logging
 import os
 from typing import Any
 
-_logger = logging.getLogger(__name__)
-
 from .daily_news_core import (
     CATEGORY_NAMES,
     DEFAULT_DAILYHOT_BASE_URL,
-    HeadlineRenderer,
     NewsConfig,
     NewsFeedClient,
     NewsFetchError,
@@ -23,7 +20,6 @@ from .daily_news_core import (
     NewsHistory,
     NewsScheduler,
     SubscriptionRecord,
-    UserPrefs,
     UserPrefsStore,
     coerce_int,
     create_cache_backend,
@@ -31,6 +27,8 @@ from .daily_news_core import (
     news_config_from_mapping,
     resolve_source_token,
 )
+
+_logger = logging.getLogger(__name__)
 
 # 中文分类名 → 英文 ID 反向映射
 _CATEGORY_ALIAS: dict[str, str] = {v: k for k, v in CATEGORY_NAMES.items()}
